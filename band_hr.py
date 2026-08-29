@@ -12,7 +12,7 @@
 
 交互:
     窗口默认点击穿透(不挡鼠标), 只显示数字
-    托盘图标 = 连接设备 / 断开 / 字号 / 窗口位置 / 点击穿透开关 / 退出
+    托盘图标 = 连接设备 / 断开 / 字号 / 字体颜色 / 窗口位置 / 点击穿透开关 / 退出
     在托盘关闭"点击穿透"后, 可左键拖动窗口, 双击数字恢复穿透
 """
 
@@ -54,6 +54,31 @@ except AttributeError:
     _GetWindowLongPtr = ctypes.windll.user32.GetWindowLongW
     _SetWindowLongPtr = ctypes.windll.user32.SetWindowLongW
 _SetWindowPos = ctypes.windll.user32.SetWindowPos
+
+
+# ---------------------------------------------------------------- 版本与外观配置
+
+APP_VERSION = "1.1.0"
+
+FONT_SIZES = (32, 40, 48, 56, 64, 72, 84, 96)   # 可选字号(像素)
+DEFAULT_FONT_SIZE = 56
+
+# 字体颜色选项: "auto" 表示按心率自动分级着色
+FONT_COLORS = {
+    "auto": "自动(按心率分级)",
+    "#ff5555": "红色",
+    "#5aff9e": "绿色",
+    "#4da6ff": "蓝色",
+    "#ffaa44": "橙色",
+    "#ffffff": "白色",
+    "#ffd93b": "黄色",
+    "#3be8ff": "青色",
+    "#ff6fa5": "粉色",
+    "#c58aff": "紫色",
+}
+
+HINT_TEXT = "未连接，右键托盘小图标进行连接"
+HINT_COLOR = "#ff3b3b"   # 醒目红, 用于未连接提示
 
 
 # ---------------------------------------------------------------- 工具函数
@@ -331,8 +356,11 @@ class HRWindow(QWidget):
         self.worker = worker
         self._drag_pos = None
         self._current_hr = None
-        self._font_size = int(load_config().get("font_size", 56))
-        self._font_size = self._font_size if self._font_size in (40, 56, 72) else 56
+        self._font_size = int(load_config().get("font_size", DEFAULT_FONT_SIZE))
+        self._font_size = self._font_size if self._font_size in FONT_SIZES else DEFAULT_FONT_SIZE
+        self._font_color = load_config().get("font_color", "auto")
+        if self._font_color not in FONT_COLORS:
+            self._font_color = "auto"
 
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -345,10 +373,12 @@ class HRWindow(QWidget):
         self.label.setAlignment(Qt.AlignCenter)
 
         # 未连接时的小提示(连接后隐藏)
-        self.hint = QLabel("未连接 · 右键托盘", self)
+        self.hint = QLabel(HINT_TEXT, self)
         self.hint.setAttribute(Qt.WA_TransparentForMouseEvents)
-        self.hint.setFont(QFont("Microsoft YaHei", 11))
-        self.hint.setStyleSheet("color: #9a9a9a; background: transparent;")
+        _hint_font = QFont("Microsoft YaHei", 11)
+        _hint_font.setBold(True)
+        self.hint.setFont(_hint_font)
+        self.hint.setStyleSheet(f"color: {HINT_COLOR}; background: transparent;")
         self.hint.setAlignment(Qt.AlignCenter)
         self.hint.hide()
 
@@ -368,7 +398,7 @@ class HRWindow(QWidget):
         self._tray = None
         if QSystemTrayIcon.isSystemTrayAvailable():
             self._tray = QSystemTrayIcon(self._make_tray_icon(), self)
-            self._tray.setToolTip("心率显示")
+            self._tray.setToolTip(f"心率显示 v{APP_VERSION}")
             self._tray.setContextMenu(self._menu)
             self._tray.activated.connect(self._on_tray_activated)
             self._tray.show()
@@ -392,6 +422,20 @@ class HRWindow(QWidget):
         cfg["font_size"] = size
         save_config(cfg)
 
+    def _set_font_color(self, color):
+        self._font_color = color
+        cfg = load_config()
+        cfg["font_color"] = color
+        save_config(cfg)
+        if self._current_hr is not None:
+            self._set_text(str(self._current_hr), self._hr_display_color(self._current_hr))
+
+    def _hr_display_color(self, v):
+        """当前字体颜色设置下, 心率数字应显示的颜色。"""
+        if self._font_color == "auto":
+            return hr_color(v)
+        return self._font_color
+
     def _set_text(self, text, color):
         self.label.setText(text)
         self.label.setStyleSheet(f"color: {color}; background: transparent;")
@@ -404,7 +448,7 @@ class HRWindow(QWidget):
     def _on_hr(self, v):
         self._current_hr = v
         self._show_hint(False)
-        self._set_text(str(v), hr_color(v))
+        self._set_text(str(v), self._hr_display_color(v))
         if self._tray is not None:
             self._tray.setToolTip(f"心率: {v} bpm")
 
@@ -424,7 +468,7 @@ class HRWindow(QWidget):
             self._show_hint(True)
             self._set_text("--", "#7a7a7a")
             if self._tray is not None:
-                self._tray.setToolTip("心率显示 (未连接)")
+                self._tray.setToolTip(f"心率显示 v{APP_VERSION} (未连接)")
 
     def _on_devices(self, devs):
         # 扫描结果由设备选择对话框消费; 这里仅作兜底占位
@@ -491,12 +535,20 @@ class HRWindow(QWidget):
         menu.addSeparator()
 
         size_menu = menu.addMenu("字号")
-        for s in (40, 56, 72):
+        for s in FONT_SIZES:
             act = QAction(f"{s} px", self)
             act.setCheckable(True)
             act.setChecked(self._font_size == s)
             act.triggered.connect(lambda _c, ss=s: self._set_font_size(ss))
             size_menu.addAction(act)
+
+        color_menu = menu.addMenu("字体颜色")
+        for c, name in FONT_COLORS.items():
+            act = QAction(name, self)
+            act.setCheckable(True)
+            act.setChecked(self._font_color == c)
+            act.triggered.connect(lambda _c, cc=c: self._set_font_color(cc))
+            color_menu.addAction(act)
 
         pos_menu = menu.addMenu("窗口位置")
         for name, corner in (("右上角", "tr"), ("左上角", "tl"), ("右下角", "br"), ("左下角", "bl")):

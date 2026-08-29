@@ -61,7 +61,7 @@ win.show()
 # 未连接 -> "--" + 提示可见
 assert win.label.text() == "--", win.label.text()
 assert win.hint.isVisible(), "未连接时应显示提示"
-assert win.hint.text() == "未连接 · 右键托盘"
+assert win.hint.text() == m.HINT_TEXT
 # 默认点击穿透开启
 assert win._passthrough is True
 # 关闭穿透 -> 状态切换
@@ -87,6 +87,23 @@ assert "ff5555" in win.label.styleSheet()
 worker.state.emit("disconnected")
 assert win.label.text() == "--", win.label.text()
 assert win.hint.isVisible(), "断开后应恢复提示"
+
+# 字体颜色: 默认自动分级
+assert win._font_color == "auto"
+assert win._hr_display_color(82) == "#5aff9e", win._hr_display_color(82)
+assert win._hr_display_color(172) == "#ff5555"
+# 固定颜色
+win._set_font_color("#4da6ff")
+assert win._font_color == "#4da6ff"
+assert win._hr_display_color(82) == "#4da6ff"
+worker.hr.emit(100)
+assert win.label.text() == "100"
+assert "4da6ff" in win.label.styleSheet()
+# 恢复自动
+win._set_font_color("auto")
+assert win._hr_display_color(100) == "#5aff9e"
+# 提示词为醒目色(非灰)
+assert m.HINT_COLOR != "#9a9a9a"
 
 # 窗口尺寸贴内容
 w = win.label.sizeHint().width()

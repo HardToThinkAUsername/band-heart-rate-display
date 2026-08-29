@@ -7,9 +7,11 @@
 - 接收标准 BLE 心率服务（0x180D / 0x2A37）广播，兼容小米手环 10 Pro 及支持心率广播的手环
 - 只显示一个数字，无任何背景，窗口缩到最小
 - 默认点击穿透，不遮挡鼠标操作
-- 系统托盘红色 ❤ 图标：连接设备 / 断开 / 字号 / 窗口位置 / 退出
+- 系统托盘红色 ❤ 图标：连接设备 / 断开 / 字号(8 档) / 字体颜色 / 窗口位置 / 退出
 - 记住上次连接设备，断开自动重连
 - 心率颜色分级：绿=正常 / 橙=偏快 / 红=过快 / 蓝=过低
+- 字体颜色可自定义：自动按心率分级，或固定红 / 绿 / 蓝 / 橙 / 白 / 黄 / 青 / 粉 / 紫
+- 8 档字号可选（32 / 40 / 48 / 56 / 64 / 72 / 84 / 96 像素）
 
 ## 使用
 
@@ -19,7 +21,7 @@
 
 ### 2. 运行
 
-下载 `BandHeartRateDisplay-v1.0.0.exe`（见 [Releases](https://github.com/HardToThinkAUsername/band-heart-rate-display/releases)），双击运行，右键系统托盘 ❤ 图标 → 连接设备 → 选择你的手环。
+下载 `BandHeartRateDisplay-v1.1.0.exe`（见 [Releases](https://github.com/HardToThinkAUsername/band-heart-rate-display/releases)），双击运行，右键系统托盘 ❤ 图标 → 连接设备 → 选择你的手环。
 
 详细说明见 [使用说明.md](使用说明.md)。
 

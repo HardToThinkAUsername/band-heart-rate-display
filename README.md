@@ -19,7 +19,7 @@
 
 ### 2. 运行
 
-下载 `心率显示.exe`（见 [Releases](https://github.com/HardToThinkAUsername/band-heart-rate-display/releases)），双击运行，右键系统托盘 ❤ 图标 → 连接设备 → 选择你的手环。
+下载 `BandHeartRateDisplay-v1.0.0.exe`（见 [Releases](https://github.com/HardToThinkAUsername/band-heart-rate-display/releases)），双击运行，右键系统托盘 ❤ 图标 → 连接设备 → 选择你的手环。
 
 详细说明见 [使用说明.md](使用说明.md)。
 

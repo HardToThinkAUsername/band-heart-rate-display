@@ -1,0 +1,22 @@
+# ---- 本地虚拟环境与缓存 ----
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# ---- 构建产物 ----
+build/
+dist/
+*.spec
+
+# ---- 本地备份 ----
+backup_v1/
+
+# ---- 本地配置(含个人设备MAC地址, 切勿上传) ----
+band_hr_config.json
+
+# ---- 系统/编辑器 ----
+Thumbs.db
+.DS_Store
+.idea/
+.vscode/

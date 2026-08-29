@@ -4,7 +4,7 @@ import os, sys
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMenu
 from PySide6.QtCore import QTimer, QObject
 
 import band_hr as m
@@ -109,6 +109,68 @@ assert m.HINT_COLOR != "#9a9a9a"
 w = win.label.sizeHint().width()
 assert win.width() >= w, (win.width(), w)
 print(f"[PASS] GUI 状态更新, 窗口尺寸 {win.width()}x{win.height()}")
+
+# ---------- 4. 退出非阻塞 + 单实例去重 ----------
+import time as _t
+w2 = m.BleWorker()
+w2.start()
+while w2._loop is None:
+    _t.sleep(0.01)
+t0 = _t.time()
+w2.shutdown()                # 默认不阻塞
+dt = _t.time() - t0
+assert dt < 2.0, f"shutdown 阻塞了 {dt:.2f}s"
+w2.shutdown()                # 重复调用应被 guard 拦截
+w2.wait(3000)
+assert not w2.isRunning(), "工作线程应已退出"
+print("[PASS] 退出非阻塞 + 重复关闭去重")
+
+# ---------- 5. 单实例锁 ----------
+from PySide6.QtCore import QLockFile
+import tempfile as _tf
+_lock_path = os.path.join(_tf.gettempdir(), "band_hr_singleton_test.lock")
+l1 = QLockFile(_lock_path); l1.setStaleLockTime(0)
+assert l1.tryLock(100), "第一个实例应获得锁"
+l2 = QLockFile(_lock_path); l2.setStaleLockTime(0)
+assert not l2.tryLock(100), "第二个实例不应获得锁"
+l1.unlock()
+l3 = QLockFile(_lock_path); l3.setStaleLockTime(0)
+assert l3.tryLock(100), "释放后应可重新获得锁"
+l3.unlock()
+print("[PASS] 单实例锁")
+
+# ---------- 6. 穿透状态 + 拖动位置记忆 ----------
+win._drag_pos = None
+win._applied_passthrough = None
+win._apply_click_state()
+assert win._applied_passthrough == win._passthrough, "未按 Alt 时实际穿透应等于配置"
+win._drag_pos = object()          # 模拟正在拖动
+win.mouseReleaseEvent(None)       # 结束拖动
+win._drag_pos = None
+_cfg = m.load_config()
+assert _cfg.get("window_pos") and len(_cfg["window_pos"]) == 2, "拖动结束应保存位置"
+# 清理测试写入的位置, 避免影响默认启动位置
+_cfg.pop("window_pos", None)
+m.save_config(_cfg)
+print("[PASS] 穿透状态 + 拖动位置记忆")
+
+# ---------- 7. 字号/颜色菜单互斥(打勾不重叠) ----------
+for _sub in win._menu.findChildren(QMenu):
+    if _sub.title() not in ("字号", "字体颜色"):
+        continue
+    _acts = _sub.actions()
+    _grp = _acts[0].actionGroup()
+    assert _grp is not None and _grp.isExclusive(), f"{_sub.title()} 应属于互斥组"
+    _checked = [a for a in _acts if a.isChecked()]
+    assert len(_checked) == 1, f"{_sub.title()} 初始应只有一个打勾, 实际 {len(_checked)}"
+    # 切换一项后仍只有一个打勾
+    for _a in _acts:
+        if not _a.isChecked():
+            _a.trigger()
+            break
+    _checked = [a for a in _acts if a.isChecked()]
+    assert len(_checked) == 1, f"{_sub.title()} 切换后应仍只有一个打勾, 实际 {len(_checked)}"
+print("[PASS] 字号/颜色菜单互斥")
 
 # 延迟退出
 QTimer.singleShot(200, app.quit)

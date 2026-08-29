@@ -14,6 +14,11 @@
     窗口默认点击穿透(不挡鼠标), 只显示数字
     托盘图标 = 连接设备 / 断开 / 字号 / 字体颜色 / 窗口位置 / 点击穿透开关 / 退出
     在托盘关闭"点击穿透"后, 可左键拖动窗口, 双击数字恢复穿透
+    点击穿透开启时: 按住 Alt 拖动数字即可移动位置(自动记忆)
+
+版本:
+    v1.1.1  退出秒退、单实例保护
+    v1.1.0  新增更多字号、字体颜色自定义、醒目未连接提示
 """
 
 import asyncio
@@ -21,11 +26,12 @@ import ctypes
 import json
 import os
 import sys
+import tempfile
 import time
 
-from PySide6.QtCore import Qt, QThread, Signal, QTimer, QPoint
+from PySide6.QtCore import Qt, QThread, Signal, QTimer, QPoint, QLockFile
 from PySide6.QtGui import (
-    QFont, QAction, QColor, QIcon, QPainter, QPixmap, QPainterPath, QCursor,
+    QFont, QAction, QActionGroup, QColor, QIcon, QPainter, QPixmap, QPainterPath, QCursor,
 )
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QMenu, QSystemTrayIcon,
@@ -58,7 +64,7 @@ _SetWindowPos = ctypes.windll.user32.SetWindowPos
 
 # ---------------------------------------------------------------- 版本与外观配置
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 
 FONT_SIZES = (32, 40, 48, 56, 64, 72, 84, 96)   # 可选字号(像素)
 DEFAULT_FONT_SIZE = 56
@@ -194,6 +200,7 @@ class BleWorker(QThread):
         self._client = None
         self._connect_gen = 0   # 连接代次, 用于取消旧的自动重连链
         self._exit = False
+        self._shutdown_started = False   # 防重复关闭
 
     # ---- 线程入口 ----
     def run(self):
@@ -219,11 +226,19 @@ class BleWorker(QThread):
         self._connect_gen += 1   # 取消自动重连链
         self.submit(self._disconnect())
 
-    def shutdown(self):
+    def shutdown(self, wait=False):
+        """通知线程退出。默认不阻塞 GUI: 由后台任务快速断开并结束事件循环。"""
         self._exit = True
+        if self._shutdown_started:
+            return
+        self._shutdown_started = True
         try:
             fut = asyncio.run_coroutine_threadsafe(self._close(), self._loop)
-            fut.result(timeout=5)
+            if wait:
+                try:
+                    fut.result(timeout=5)
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -269,7 +284,7 @@ class BleWorker(QThread):
     async def _close(self):
         if self._client:
             try:
-                await self._client.disconnect()
+                await asyncio.wait_for(self._client.disconnect(), timeout=1.0)
             except Exception:
                 pass
         try:
@@ -393,6 +408,12 @@ class HRWindow(QWidget):
 
         # 点击穿透(默认开启)与托盘
         self._passthrough = bool(load_config().get("passthrough", True))
+        self._applied_passthrough = self._passthrough
+        # 按住 Alt 临时取消穿透, 便于直接拖动数字
+        self._move_timer = QTimer(self)
+        self._move_timer.setInterval(100)
+        self._move_timer.timeout.connect(self._apply_click_state)
+        self._move_timer.start()
         self._use_tray = False
         self._menu = self._build_menu()
         self._tray = None
@@ -477,9 +498,19 @@ class HRWindow(QWidget):
     def _on_notify(self, msg):
         QMessageBox.information(self, "心率显示", msg)
 
-    # ---- 拖动(仅在关闭点击穿透时可用) ----
+    # ---- 拖动(点击穿透时按住 Alt, 或关闭穿透时直接拖动) ----
+    def _apply_click_state(self):
+        """按"配置穿透 && 是否按住 Alt"计算并应用实际穿透状态。"""
+        if self._drag_pos is not None:   # 拖动中不切换, 避免丢鼠标
+            return
+        alt = bool(ctypes.windll.user32.GetAsyncKeyState(0x12) & 0x8000)
+        want = self._passthrough and not alt
+        if want != self._applied_passthrough:
+            self._applied_passthrough = want
+            set_window_click_through(int(self.winId()), want)
+
     def mousePressEvent(self, e):
-        if e.button() == Qt.LeftButton and not self._passthrough:
+        if e.button() == Qt.LeftButton and not self._applied_passthrough:
             self._drag_pos = e.globalPosition().toPoint() - self.frameGeometry().topLeft()
 
     def mouseMoveEvent(self, e):
@@ -487,17 +518,22 @@ class HRWindow(QWidget):
             self.move(e.globalPosition().toPoint() - self._drag_pos)
 
     def mouseReleaseEvent(self, e):
+        if self._drag_pos is not None:
+            # 拖动结束后记忆位置
+            cfg = load_config()
+            cfg['window_pos'] = [self.x(), self.y()]
+            save_config(cfg)
         self._drag_pos = None
 
     def mouseDoubleClickEvent(self, e):
         # 关闭穿透时可双击数字快速恢复穿透
-        if e.button() == Qt.LeftButton and not self._passthrough:
+        if e.button() == Qt.LeftButton and not self._applied_passthrough:
             self._set_passthrough(True)
 
     def showEvent(self, event):
         super().showEvent(event)
         # 每次显示都按当前状态应用穿透(窗口句柄可能被 Qt 重建)
-        QTimer.singleShot(0, lambda: set_window_click_through(int(self.winId()), self._passthrough))
+        QTimer.singleShot(0, lambda: self._apply_click_state())
 
     # ---- 右键菜单(仅当系统托盘不可用时, 作为窗口兜底入口) ----
     def contextMenuEvent(self, event):
@@ -535,19 +571,25 @@ class HRWindow(QWidget):
         menu.addSeparator()
 
         size_menu = menu.addMenu("字号")
+        size_group = QActionGroup(self)
+        size_group.setExclusive(True)   # 同一时刻只允许一个字号打勾
         for s in FONT_SIZES:
             act = QAction(f"{s} px", self)
             act.setCheckable(True)
             act.setChecked(self._font_size == s)
             act.triggered.connect(lambda _c, ss=s: self._set_font_size(ss))
+            size_group.addAction(act)
             size_menu.addAction(act)
 
         color_menu = menu.addMenu("字体颜色")
+        color_group = QActionGroup(self)
+        color_group.setExclusive(True)  # 同一时刻只允许一个颜色打勾
         for c, name in FONT_COLORS.items():
             act = QAction(name, self)
             act.setCheckable(True)
             act.setChecked(self._font_color == c)
             act.triggered.connect(lambda _c, cc=c: self._set_font_color(cc))
+            color_group.addAction(act)
             color_menu.addAction(act)
 
         pos_menu = menu.addMenu("窗口位置")
@@ -575,7 +617,7 @@ class HRWindow(QWidget):
 
     def _set_passthrough(self, enabled):
         self._passthrough = enabled
-        set_window_click_through(int(self.winId()), enabled)
+        self._apply_click_state()
         cfg = load_config()
         cfg["passthrough"] = enabled
         save_config(cfg)
@@ -612,7 +654,7 @@ class HRWindow(QWidget):
             "2. 右键屏幕右下角托盘的红色❤图标 → “连接设备”\n"
             "3. 在列表中选择你的手环\n\n"
             "窗口默认点击穿透(不挡鼠标)。需要移动时:\n"
-            "托盘菜单 → 取消勾选“点击穿透”→ 拖动数字 → 再勾选恢复。",
+            "按住 Alt 键拖动数字, 即可移动到任意位置(松开后位置会被记住)。",
         )
 
 
@@ -696,6 +738,14 @@ def main():
     app.setApplicationName("心率显示")
     app.setQuitOnLastWindowClosed(False)  # 托盘常驻, 不因窗口关闭退出
 
+    # 单实例保护: 重复启动时提示并退出
+    _lock = QLockFile(os.path.join(tempfile.gettempdir(), "band_hr_singleton.lock"))
+    _lock.setStaleLockTime(0)   # 进程已退出则立即回收锁
+    if not _lock.tryLock(100):
+        QMessageBox.warning(None, "心率显示",
+                            "程序已在运行（查看右下角托盘图标）。\n如需重启，请先在托盘菜单选择“退出”。")
+        return
+
     worker = BleWorker()
     worker.start()
     # 等待事件循环就绪
@@ -705,9 +755,14 @@ def main():
     win = HRWindow(worker)
     win.show()
 
-    # 默认摆到屏幕右上角
-    screen = app.primaryScreen().availableGeometry()
-    win.move(screen.right() - win.width() - 48, screen.top() + 48)
+    # 记忆上次位置, 否则默认摆到屏幕右上角
+    _cfg0 = load_config()
+    _pos = _cfg0.get("window_pos")
+    if isinstance(_pos, (list, tuple)) and len(_pos) == 2:
+        win.move(int(_pos[0]), int(_pos[1]))
+    else:
+        screen = app.primaryScreen().availableGeometry()
+        win.move(screen.right() - win.width() - 48, screen.top() + 48)
 
     cfg = load_config()
     saved_mac = cfg.get("device_mac")
